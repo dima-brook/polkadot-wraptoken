@@ -11,7 +11,7 @@ members = [
     "crates/env",
     "crates/storage",
     "crates/storage/derive",
-	"examples"
+	"examples/erc20"
 ]
 
 [profile.release]
