@@ -11,24 +11,26 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 #![cfg_attr(not(feature = "std"), no_std)]
 
+pub use self::wrap_token::WrapToken;
 use ink_lang as ink;
 
 #[ink::contract]
-mod erc20 {
+pub mod wrap_token {
     #[cfg(not(feature = "ink-as-dependency"))]
     use ink_storage::{
         collections::HashMap as StorageHashMap,
-        lazy::Lazy,
     };
 
-    /// A simple ERC-20 contract.
+    /// Defines the storage of your contract.
+    /// Add new fields to the below struct in order
+    /// to add new static storage fields to your contract.
     #[ink(storage)]
-    pub struct Erc20 {
+    pub struct WrapToken {
+        owner: AccountId,
         /// Total token supply.
-        total_supply: Lazy<Balance>,
+        total_supply: Balance,
         /// Mapping from owner to number of owned token.
         balances: StorageHashMap<AccountId, Balance>,
         /// Mapping of the token amount which an account is allowed to withdraw
@@ -61,16 +63,17 @@ mod erc20 {
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Error {
+        /// Returened if owner only command
+        InsufficentPermissions,
         /// Returned if not enough balance to fulfill a request is available.
         InsufficientBalance,
         /// Returned if not enough allowance to fulfill a request is available.
         InsufficientAllowance,
     }
 
-    /// The ERC-20 result type.
     pub type Result<T> = core::result::Result<T, Error>;
 
-    impl Erc20 {
+    impl WrapToken {
         /// Creates a new ERC-20 contract with the specified initial supply.
         #[ink(constructor)]
         pub fn new(initial_supply: Balance) -> Self {
@@ -78,7 +81,8 @@ mod erc20 {
             let mut balances = StorageHashMap::new();
             balances.insert(caller, initial_supply);
             let instance = Self {
-                total_supply: Lazy::new(initial_supply),
+                owner: caller,
+                total_supply: initial_supply,
                 balances,
                 allowances: StorageHashMap::new(),
             };
@@ -90,10 +94,46 @@ mod erc20 {
             instance
         }
 
+        #[ink(message)]
+        pub fn new_owner(&mut self, owner: AccountId) {
+            if self.env().caller() != self.owner {
+                panic!("only owner can call this")
+            }
+
+            self.owner = owner;
+        }
+
+        #[ink(message, selector = "0x3191C019")]
+        pub fn mint(&mut self, value: Balance, to: AccountId) {
+            if self.env().caller() != self.owner {
+                panic!("only owner can call this")
+            }
+
+            let balance = self.balances.get(&to).cloned().unwrap_or(0) + value;
+            self.balances.insert(to, balance);
+
+            self.total_supply += value;
+        }
+
+        #[ink(message, selector = "0xB0F9C019")]
+        pub fn burn(&mut self, value: Balance, account: AccountId) {
+            if self.env().caller() != self.owner {
+                panic!("only owner can call this");
+            }
+
+            let balance = self.balances.get(&account).expect("InsufficientBalance").clone();
+            if balance < value {
+                panic!("InsufficientBalance")
+            }
+
+            self.balances.insert(account, balance - value);
+            self.total_supply -= value;
+        }
+
         /// Returns the total token supply.
         #[ink(message)]
         pub fn total_supply(&self) -> Balance {
-            *self.total_supply
+            self.total_supply
         }
 
         /// Returns the account balance for the specified `owner`.
@@ -181,7 +221,7 @@ mod erc20 {
         ///
         /// # Errors
         ///
-        /// Returns `InsufficientBalance` error if there are not enough tokens on
+       /// Returns `InsufficientBalance` error if there are not enough tokens on
         /// the caller's account balance.
         fn transfer_from_to(
             &mut self,
